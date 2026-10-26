@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 MAX_USER_INPUT_CHARS = 2000
 
+NotificationType = Literal["email", "sms"]
+
 
 class Status(str, Enum):
     """Public request status, as defined by the API contract."""
@@ -96,7 +98,7 @@ class NotificationPayload(BaseModel):
 
     to: str = Field(..., min_length=1)
     message: str = Field(..., min_length=1)
-    type: Literal["email", "sms"]
+    type: NotificationType
 
 
 def utcnow() -> datetime:
