@@ -1,0 +1,72 @@
+"""Runtime settings, read from environment variables with sensible defaults.
+
+Every field can be overridden with an env var of the same name in upper case,
+e.g. ``NOTIFY_RATE_PER_SEC=4``.
+"""
+
+import os
+from dataclasses import dataclass, fields
+from functools import lru_cache
+
+_TRUE = {"1", "true", "yes", "on"}
+_FALSE = {"0", "false", "no", "off"}
+
+
+def _parse(raw: str, kind: type):
+    """Convert an env var string to ``kind``. ``bool`` is explicit because ``bool("false")`` is True."""
+    if kind is bool:
+        value = raw.strip().lower()
+        if value in _TRUE:
+            return True
+        if value in _FALSE:
+            return False
+        raise ValueError(f"expected one of {sorted(_TRUE | _FALSE)}")
+    return kind(raw)
+
+
+@dataclass(frozen=True)
+class Settings:
+    # Provider (AI engine + notification service)
+    provider_base_url: str = "http://localhost:3001"
+    provider_api_key: str = "test-dev-2026"
+
+    # AI extraction stage
+    ai_timeout_sec: float = 10.0
+    max_ai_attempts: int = 2  # total AI calls per request, retries included
+    extraction_workers: int = 100
+
+    # Notification stage. The provider accepts 50 req / 10 s, so we pace below 5 req/s.
+    notify_timeout_sec: float = 5.0
+    notify_workers: int = 5
+    notify_rate_per_sec: float = 4.5
+    notify_burst: int = 1
+    notify_cooldown_sec: float = 2.0
+    max_notify_attempts: int = 6
+
+    queue_maxsize: int = 10_000
+    log_level: str = "INFO"
+
+    def __post_init__(self) -> None:
+        # Every numeric setting is a timeout, rate, count or size: zero or negative is always a mistake.
+        for f in fields(self):
+            value = getattr(self, f.name)
+            if f.type in (int, float) and value <= 0:
+                raise ValueError(f"{f.name.upper()} must be positive, got {value!r}")
+
+    @classmethod
+    def from_env(cls) -> "Settings":
+        overrides = {}
+        for f in fields(cls):
+            raw = os.getenv(f.name.upper())
+            if raw is None:
+                continue
+            try:
+                overrides[f.name] = _parse(raw, f.type)
+            except ValueError as exc:
+                raise ValueError(f"Invalid value for {f.name.upper()}: {raw!r} ({exc})") from exc
+        return cls(**overrides)
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings.from_env()
