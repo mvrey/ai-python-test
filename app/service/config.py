@@ -30,14 +30,20 @@ class Settings:
     provider_base_url: str = "http://localhost:3001"
     provider_api_key: str = "test-dev-2026"
 
-    # AI extraction stage
-    ai_timeout_sec: float = 10.0
+    # AI extraction stage.
+    # Timeouts are sized for a *degraded* provider, not its nominal latency (1.5-3 s). Under load
+    # the mock's event loop stalls on synchronous InfluxDB writes and answers take 10 s+. A call
+    # that times out still counts as an AI hit and is still processed by the provider, so giving
+    # up early only adds load and burns the retry budget.
+    ai_timeout_sec: float = 30.0
     max_ai_attempts: int = 2  # total AI calls per request, retries included
     ai_retry_backoff_sec: float = 0.5  # base delay before retrying after a transport/HTTP error
     extraction_workers: int = 100
 
     # Notification stage. The provider accepts 50 req / 10 s, so we pace below 5 req/s.
-    notify_timeout_sec: float = 5.0
+    # Nominal latency is 0.1-0.5 s; a read timeout on a slow-but-alive provider usually means the
+    # notification *was* delivered, and retrying it sends a duplicate. Hence a generous timeout.
+    notify_timeout_sec: float = 15.0
     notify_workers: int = 5
     notify_rate_per_sec: float = 4.5
     notify_burst: int = 1
