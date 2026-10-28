@@ -1,5 +1,8 @@
 ﻿# AI Engineer Challenge: Intelligent Notification Service
 
+> **Solución:** diseño, decisiones y resultados en [SOLUTION.md](SOLUTION.md).
+> *Design, decisions and results are in [SOLUTION.md](SOLUTION.md).*
+
 ## El Reto
 Tu objetivo es implementar un servicio que procese entradas de lenguaje natural, extraiga información estructurada mediante un motor de IA y coordine el envío de notificaciones. La solución debe ser capaz de manejar la incertidumbre de los LLM (ruido en respuestas, formatos inconsistentes) y la latencia del procesamiento cognitivo.
 
