@@ -48,6 +48,11 @@ class Settings:
 
     queue_maxsize: int = 10_000  # extraction intake; beyond this, /process marks requests failed
     log_level: str = "INFO"
+    access_log: bool = False  # uvicorn per-request access log; noisy and costly under load
+
+    def public_dict(self) -> dict:
+        """Settings safe to log (secrets masked)."""
+        return {f.name: "***" if f.name == "provider_api_key" else getattr(self, f.name) for f in fields(self)}
 
     def __post_init__(self) -> None:
         # Every numeric setting is a timeout, rate, count or size: zero or negative is always a mistake.

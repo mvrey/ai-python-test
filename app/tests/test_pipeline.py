@@ -28,8 +28,8 @@ class FakeExtractor:
 
     async def extract(self, messages):
         self.calls.append(messages)
+        answer = self.script[min(len(self.calls), len(self.script)) - 1]  # fixed before yielding
         await asyncio.sleep(0)
-        answer = self.script[min(len(self.calls), len(self.script)) - 1]
         if isinstance(answer, BaseException):
             raise answer
         return answer
@@ -42,8 +42,8 @@ class FakeSender:
 
     async def send(self, payload, trace_id):
         self.calls.append((payload, trace_id))
+        outcome = self.script[min(len(self.calls), len(self.script)) - 1]  # fixed before yielding
         await asyncio.sleep(0)
-        outcome = self.script[min(len(self.calls), len(self.script)) - 1]
         if isinstance(outcome, BaseException):
             raise outcome
         return outcome
@@ -298,6 +298,39 @@ async def test_duplicate_submission_calls_the_ai_once(make):
 
     assert len(h.extractor.calls) == 1
     assert len(h.sender.calls) == 1
+
+
+async def test_snapshot_reports_workers_queues_and_ratio(make):
+    h = await make(FakeExtractor(REFUSAL, GOOD_ANSWER))
+    await h.wait_terminal(h.submit(), h.submit())
+
+    snapshot = h.pipeline.snapshot()
+
+    assert snapshot["healthy"]
+    assert snapshot["workers"] == {
+        "extraction": {"alive": 3, "expected": 3},
+        "notify": {"alive": 2, "expected": 2},
+    }
+    assert snapshot["queues"] == {"extraction": 0, "notify": 0, "notify_retries_scheduled": 0}
+    assert snapshot["ai_calls_per_request"] == 1.5  # 3 AI calls for 2 requests
+    assert snapshot["counters"]["submitted"] == 2
+    assert snapshot["counters"]["extraction_rejected:refusal"] == 1
+
+
+async def test_snapshot_is_unhealthy_when_a_worker_dies(make):
+    h = await make()
+    h.pipeline._notify_workers[0].cancel()
+    await asyncio.sleep(0)
+
+    snapshot = h.pipeline.snapshot()
+
+    assert not snapshot["healthy"]
+    assert snapshot["workers"]["notify"]["alive"] == 1
+
+
+async def test_snapshot_before_any_request(make):
+    h = await make()
+    assert h.pipeline.snapshot()["ai_calls_per_request"] is None
 
 
 async def test_submit_reports_a_full_queue():

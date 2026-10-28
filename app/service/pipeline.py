@@ -71,7 +71,8 @@ class Pipeline:
         # Unbounded on purpose: notifications drain at ~5/s while extraction finishes ~10x faster,
         # so this backlog must be able to grow. Each request is in it at most once.
         self._notify_queue: asyncio.Queue[str] = asyncio.Queue()
-        self._workers: list[asyncio.Task] = []
+        self._extraction_workers: list[asyncio.Task] = []
+        self._notify_workers: list[asyncio.Task] = []
         self._delayed: set[asyncio.Task] = set()
         self.stats: Counter[str] = Counter()
 
@@ -82,15 +83,19 @@ class Pipeline:
         try:
             self._extraction_queue.put_nowait(request_id)
         except asyncio.QueueFull:
+            self.stats["submit_rejected"] += 1
             return False
+        self.stats["submitted"] += 1
         return True
 
     async def start(self) -> None:
-        self._workers = [
-            *(asyncio.create_task(self._run(self._extraction_queue, self._extract), name=f"extract-{i}")
-              for i in range(self._settings.extraction_workers)),
-            *(asyncio.create_task(self._run(self._notify_queue, self._notify), name=f"notify-{i}")
-              for i in range(self._settings.notify_workers)),
+        self._extraction_workers = [
+            asyncio.create_task(self._run(self._extraction_queue, self._extract), name=f"extract-{i}")
+            for i in range(self._settings.extraction_workers)
+        ]
+        self._notify_workers = [
+            asyncio.create_task(self._run(self._notify_queue, self._notify), name=f"notify-{i}")
+            for i in range(self._settings.notify_workers)
         ]
         logger.info(
             "pipeline started: %d extraction workers, %d notify workers",
@@ -98,15 +103,35 @@ class Pipeline:
         )
 
     async def stop(self) -> None:
-        tasks = [*self._workers, *self._delayed]
+        tasks = [*self._extraction_workers, *self._notify_workers, *self._delayed]
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        self._workers.clear()
+        self._extraction_workers.clear()
+        self._notify_workers.clear()
         self._delayed.clear()
 
-    def queue_sizes(self) -> dict[str, int]:
-        return {"extraction": self._extraction_queue.qsize(), "notify": self._notify_queue.qsize()}
+    def snapshot(self) -> dict:
+        """Operational state for /health: worker liveness, backlog, and counters."""
+        extraction_alive = sum(not task.done() for task in self._extraction_workers)
+        notify_alive = sum(not task.done() for task in self._notify_workers)
+        submitted = self.stats["submitted"]
+        return {
+            "healthy": extraction_alive == self._settings.extraction_workers
+            and notify_alive == self._settings.notify_workers,
+            "workers": {
+                "extraction": {"alive": extraction_alive, "expected": self._settings.extraction_workers},
+                "notify": {"alive": notify_alive, "expected": self._settings.notify_workers},
+            },
+            "queues": {
+                "extraction": self._extraction_queue.qsize(),
+                "notify": self._notify_queue.qsize(),
+                "notify_retries_scheduled": len(self._delayed),
+            },
+            # The scorecard's "attempts per request" metric (provider extract hits / process calls).
+            "ai_calls_per_request": round(self.stats["ai_calls"] / submitted, 3) if submitted else None,
+            "counters": dict(sorted(self.stats.items())),
+        }
 
     async def _run(self, queue: asyncio.Queue[str], handle) -> None:
         while True:

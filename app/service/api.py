@@ -6,9 +6,10 @@ pipeline workers, which is what makes the store's check-then-act sequences atomi
 """
 
 import logging
+from collections import Counter
 from typing import Protocol
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from service.models import CreateRequest, CreateResponse, RequestRecord, Stage, StatusResponse
 from service.store import RequestStore
@@ -22,11 +23,19 @@ class JobSubmitter(Protocol):
     def submit(self, request_id: str) -> bool: ...
 
 
+class PipelineMonitor(Protocol):
+    def snapshot(self) -> dict: ...
+
+
 def get_store(request: Request) -> RequestStore:
     return request.app.state.store
 
 
 def get_submitter(request: Request) -> JobSubmitter:
+    return request.app.state.pipeline
+
+
+def get_monitor(request: Request) -> PipelineMonitor:
     return request.app.state.pipeline
 
 
@@ -44,7 +53,7 @@ def _status_response(record: RequestRecord) -> StatusResponse:
 @router.post("/v1/requests", status_code=status.HTTP_201_CREATED, response_model=CreateResponse)
 async def create_request(body: CreateRequest, store: RequestStore = Depends(get_store)) -> CreateResponse:
     record = store.create(body.user_input)
-    logger.info("request created id=%s", record.id)
+    logger.debug("request created id=%s", record.id)
     return CreateResponse(id=record.id)
 
 
@@ -81,5 +90,27 @@ async def get_request_status(request_id: str, store: RequestStore = Depends(get_
 
 
 @router.get("/health")
-async def health() -> dict:
-    return {"status": "ok"}
+async def health(
+    response: Response,
+    store: RequestStore = Depends(get_store),
+    monitor: PipelineMonitor = Depends(get_monitor),
+) -> dict:
+    """Liveness plus operational state. 503 if any pipeline worker has died."""
+    snapshot = monitor.snapshot()
+    healthy = snapshot.pop("healthy")
+    if not healthy:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+
+    by_stage = store.count_by_stage()
+    by_status: Counter[str] = Counter()
+    for stage, count in by_stage.items():
+        by_status[stage.status.value] += count
+    return {
+        "status": "ok" if healthy else "degraded",
+        "requests": {
+            "total": sum(by_stage.values()),
+            "by_status": dict(by_status),
+            "by_stage": {stage.value: count for stage, count in by_stage.items()},
+        },
+        **snapshot,
+    }

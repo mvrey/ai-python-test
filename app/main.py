@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from service.ai_client import AIClient
 from service.api import router
 from service.config import get_settings
+from service.logging_config import configure_logging
 from service.notifier import Notifier
 from service.pipeline import Pipeline
 from service.provider_http import create_provider_client
@@ -19,6 +20,8 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    configure_logging(settings)
+    logger.info("starting with settings %s", settings.public_dict())
     http = create_provider_client(settings)
     store = InMemoryRequestStore()
     pipeline = Pipeline(

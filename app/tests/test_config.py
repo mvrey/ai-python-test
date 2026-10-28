@@ -52,6 +52,18 @@ def test_bool_parsing_is_explicit(raw, expected):
     assert _parse(raw, bool) is expected
 
 
+def test_bool_setting_from_env(monkeypatch):
+    monkeypatch.setenv("ACCESS_LOG", "true")
+    assert Settings.from_env().access_log is True
+
+
+def test_public_dict_masks_the_api_key():
+    public = Settings(provider_api_key="secret").public_dict()
+    assert public["provider_api_key"] == "***"
+    assert "secret" not in str(public)
+    assert public["notify_rate_per_sec"] == 4.5
+
+
 def test_bool_parsing_rejects_unknown_values():
     with pytest.raises(ValueError):
         _parse("maybe", bool)

@@ -2,7 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import app
-from service.api import get_store, get_submitter
+from service.api import get_monitor, get_store, get_submitter
 from service.models import Stage
 from service.store import InMemoryRequestStore
 
@@ -141,8 +141,48 @@ def test_status_unknown_id_returns_404(client):
 # --- Cross-cutting ----------------------------------------------------------------
 
 
-def test_health(client):
-    assert client.get("/health").json() == {"status": "ok"}
+class FakeMonitor:
+    def __init__(self, healthy=True):
+        self.healthy = healthy
+
+    def snapshot(self):
+        return {"healthy": self.healthy, "queues": {"extraction": 0, "notify": 3}, "ai_calls_per_request": 1.1}
+
+
+def health(client, monitor):
+    app.dependency_overrides[get_monitor] = lambda: monitor
+    return client.get("/health")
+
+
+def test_health_reports_request_counts_and_pipeline_state(client, store):
+    first, second = create(client), create(client)
+    store.transition(second, Stage.EXTRACTION_PENDING)
+    store.transition(second, Stage.EXTRACTING)
+
+    response = health(client, FakeMonitor())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["requests"]["total"] == 2
+    assert body["requests"]["by_status"] == {"queued": 1, "processing": 1, "sent": 0, "failed": 0}
+    assert body["requests"]["by_stage"]["extracting"] == 1
+    assert body["queues"] == {"extraction": 0, "notify": 3}
+    assert body["ai_calls_per_request"] == 1.1
+    assert "healthy" not in body
+
+
+def test_health_is_503_when_degraded(client):
+    response = health(client, FakeMonitor(healthy=False))
+    assert response.status_code == 503
+    assert response.json()["status"] == "degraded"
+
+
+def test_health_with_the_real_pipeline():
+    with TestClient(app) as client:
+        body = client.get("/health").json()
+    assert body["status"] == "ok"
+    assert body["workers"]["extraction"]["alive"] == body["workers"]["extraction"]["expected"]
 
 
 def test_unexpected_errors_return_json_500(store, submitter):

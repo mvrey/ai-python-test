@@ -118,6 +118,21 @@ def test_attempt_counters_increment_and_touch_timestamp(store):
     assert updated.stage is Stage.CREATED
 
 
+def test_count_by_stage(store):
+    assert set(store.count_by_stage().values()) == {0}
+    first, second = store.create("a"), store.create("b")
+    store.create("c")
+    store.transition(first.id, Stage.FAILED)
+    store.transition(second.id, Stage.EXTRACTION_PENDING)
+
+    counts = store.count_by_stage()
+
+    assert counts[Stage.CREATED] == 1
+    assert counts[Stage.FAILED] == 1
+    assert counts[Stage.EXTRACTION_PENDING] == 1
+    assert sum(counts.values()) == 3
+
+
 def test_unknown_id_raises(store):
     with pytest.raises(RequestNotFoundError):
         store.record_ai_attempt("missing")

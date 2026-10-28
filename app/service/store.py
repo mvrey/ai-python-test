@@ -54,6 +54,8 @@ class RequestStore(Protocol):
 
     def record_notify_attempt(self, request_id: str) -> RequestRecord: ...
 
+    def count_by_stage(self) -> dict[Stage, int]: ...
+
 
 class InMemoryRequestStore:
     """Dict-backed store. Returns copies so callers can't mutate state behind the store's back."""
@@ -100,6 +102,12 @@ class InMemoryRequestStore:
         record = self._require(request_id)
         record.notify_attempts += 1
         return self._touch(record)
+
+    def count_by_stage(self) -> dict[Stage, int]:
+        counts = dict.fromkeys(Stage, 0)
+        for record in self._records.values():
+            counts[record.stage] += 1
+        return counts
 
     def _require(self, request_id: str) -> RequestRecord:
         try:
