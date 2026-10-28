@@ -92,6 +92,13 @@ _REFUSAL_MARKERS = (
 )
 
 
+def precheck(user_input: str) -> Rejected | None:
+    """Reject requests that no AI answer could make valid, before spending an AI call on them."""
+    if not find_recipients(user_input):
+        return Rejected(FailureReason.NO_RECIPIENT)
+    return None
+
+
 def extract_payload(raw: Any, user_input: str) -> GuardrailResult:
     repairs: list[str] = []
 

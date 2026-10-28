@@ -4,9 +4,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
+from service.ai_client import AIClient
 from service.api import router
 from service.config import get_settings
+from service.notifier import Notifier
 from service.pipeline import Pipeline
+from service.provider_http import create_provider_client
+from service.rate_limiter import TokenBucket
 from service.store import InMemoryRequestStore
 
 logger = logging.getLogger(__name__)
@@ -15,13 +19,23 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    app.state.store = InMemoryRequestStore()
-    app.state.pipeline = Pipeline(settings)
-    await app.state.pipeline.start()
+    http = create_provider_client(settings)
+    store = InMemoryRequestStore()
+    pipeline = Pipeline(
+        settings,
+        store,
+        extractor=AIClient(http, settings.ai_timeout_sec),
+        sender=Notifier(http, settings.notify_timeout_sec),
+        limiter=TokenBucket(settings.notify_rate_per_sec, settings.notify_burst),
+    )
+    app.state.store = store
+    app.state.pipeline = pipeline
+    await pipeline.start()
     try:
         yield
     finally:
-        await app.state.pipeline.stop()
+        await pipeline.stop()
+        await http.aclose()
 
 
 app = FastAPI(title="Notification Service (Technical Test)", lifespan=lifespan)

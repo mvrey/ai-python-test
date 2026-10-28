@@ -33,6 +33,7 @@ class Settings:
     # AI extraction stage
     ai_timeout_sec: float = 10.0
     max_ai_attempts: int = 2  # total AI calls per request, retries included
+    ai_retry_backoff_sec: float = 0.5  # base delay before retrying after a transport/HTTP error
     extraction_workers: int = 100
 
     # Notification stage. The provider accepts 50 req / 10 s, so we pace below 5 req/s.
@@ -42,8 +43,10 @@ class Settings:
     notify_burst: int = 1
     notify_cooldown_sec: float = 2.0
     max_notify_attempts: int = 6
+    notify_retry_backoff_sec: float = 1.0
+    max_backoff_sec: float = 30.0
 
-    queue_maxsize: int = 10_000
+    queue_maxsize: int = 10_000  # extraction intake; beyond this, /process marks requests failed
     log_level: str = "INFO"
 
     def __post_init__(self) -> None:

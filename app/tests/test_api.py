@@ -162,8 +162,8 @@ def test_unexpected_errors_return_json_500(store, submitter):
 
 
 def test_real_wiring_without_overrides():
-    """End-to-end through the lifespan-built store and pipeline (no workers yet)."""
+    """Through the lifespan-built store and pipeline. Workers start, but no provider is reachable."""
     with TestClient(app) as client:
         request_id = create(client)
         assert client.post(f"/v1/requests/{request_id}/process").status_code == 202
-        assert client.get(f"/v1/requests/{request_id}").json()["status"] == "queued"
+        assert client.get(f"/v1/requests/{request_id}").json()["status"] in ("queued", "processing", "failed")
