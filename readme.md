@@ -72,7 +72,7 @@ Un servicio FastAPI que convierte una petición en lenguaje natural ("Manda un c
 en una notificación: un LLM extrae destinatario, mensaje y canal; los guardrails reparan y validan
 su respuesta ruidosa, y un pool de workers con límite de tasa la entrega.
 
-**Resultados** (suite oficial de k6 con `docker compose`; detalle en [docs/load-test-results.md](docs/load-test-results.md), en inglés):
+**Resultados** (suite oficial de k6 con `docker compose`):
 
 | Scorecard | Resultado |
 |---|---|
@@ -342,6 +342,3 @@ oficial de k6.
 | Un destinatario por petición | Devolver una lista de notificaciones desde la extracción |
 | Sin autenticación en la API del propio servicio | API gateway u OAuth2 |
 | El mock ignora los parámetros del modelo | Con un LLM real: `temperature=0`, salida estructurada / modo JSON y petición entre delimitadores |
-
-Notas de diseño y plan paso a paso: [docs/implementation-plan.md](docs/implementation-plan.md);
-análisis inicial: [docs/analysis.md](docs/analysis.md) (ambos en inglés).
