@@ -1,7 +1,7 @@
 """API schemas and domain models."""
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Literal
 
@@ -102,7 +102,7 @@ class NotificationPayload(BaseModel):
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @dataclass
@@ -111,7 +111,6 @@ class RequestRecord:
     user_input: str
     stage: Stage = Stage.CREATED
     created_at: datetime = field(default_factory=utcnow)
-    updated_at: datetime = field(default_factory=utcnow)
     extraction: NotificationPayload | None = None
     ai_attempts: int = 0
     notify_attempts: int = 0

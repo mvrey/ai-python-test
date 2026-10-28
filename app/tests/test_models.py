@@ -1,3 +1,5 @@
+from itertools import pairwise
+
 import pytest
 from pydantic import ValidationError
 
@@ -29,7 +31,7 @@ def test_only_sent_and_failed_are_terminal():
     assert {s for s in Stage if s.is_terminal} == {Stage.SENT, Stage.FAILED}
 
 
-@pytest.mark.parametrize("current, target", zip(HAPPY_PATH, HAPPY_PATH[1:]))
+@pytest.mark.parametrize("current, target", pairwise(HAPPY_PATH))
 def test_happy_path_transitions_are_allowed(current, target):
     assert current.can_transition_to(target)
 

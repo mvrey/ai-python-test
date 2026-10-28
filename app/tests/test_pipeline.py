@@ -62,7 +62,7 @@ class FakeLimiter:
 
 
 class Harness:
-    def __init__(self, extractor=None, sender=None, **settings):
+    def __init__(self, extractor=None, sender=None, sleep=None, **settings):
         self.store = InMemoryRequestStore()
         self.extractor = extractor or FakeExtractor()
         self.sender = sender or FakeSender()
@@ -75,11 +75,11 @@ class Harness:
             self.extractor,
             self.sender,
             self.limiter,
-            sleep=self._sleep,
+            sleep=sleep or self._record_sleep,
             rng=random.Random(0),
         )
 
-    async def _sleep(self, seconds):
+    async def _record_sleep(self, seconds):
         self.sleeps.append(seconds)
         await asyncio.sleep(0)
 
@@ -213,8 +213,8 @@ async def test_more_attempts_can_be_configured(make):
 
 async def test_429_pauses_the_limiter_and_is_retried(make):
     h = await make(sender=FakeSender(
-        NotifyError("http_429", retryable=True, retry_after=3.0),
-        NotifyError("http_429", retryable=True),
+        NotifyError("http_429", retryable=True, status_code=429, retry_after=3.0),
+        NotifyError("http_429", retryable=True, status_code=429),
         "p-9",
     ))
     (record,) = await h.wait_terminal(h.submit())
@@ -252,7 +252,7 @@ async def test_backoff_grows_and_is_capped(make):
 
     bases = [1, 2, 4, 4, 4]
     assert len(h.sleeps) == 5
-    assert all(0.5 * base <= s < base for s, base in zip(h.sleeps, bases))
+    assert all(0.5 * base <= s < base for s, base in zip(h.sleeps, bases, strict=True))
 
 
 async def test_maybe_delivered_is_retried_with_the_same_trace_id(make):
@@ -306,7 +306,7 @@ async def test_snapshot_reports_workers_queues_and_ratio(make):
 
     snapshot = h.pipeline.snapshot()
 
-    assert snapshot["healthy"]
+    assert h.pipeline.healthy
     assert snapshot["workers"] == {
         "extraction": {"alive": 3, "expected": 3},
         "notify": {"alive": 2, "expected": 2},
@@ -317,15 +317,14 @@ async def test_snapshot_reports_workers_queues_and_ratio(make):
     assert snapshot["counters"]["extraction_rejected:refusal"] == 1
 
 
-async def test_snapshot_is_unhealthy_when_a_worker_dies(make):
+async def test_unhealthy_when_a_worker_dies(make):
     h = await make()
+    # Workers are built never to exit; killing one is only possible from the inside.
     h.pipeline._notify_workers[0].cancel()
     await asyncio.sleep(0)
 
-    snapshot = h.pipeline.snapshot()
-
-    assert not snapshot["healthy"]
-    assert snapshot["workers"]["notify"]["alive"] == 1
+    assert not h.pipeline.healthy
+    assert h.pipeline.snapshot()["workers"]["notify"]["alive"] == 1
 
 
 async def test_snapshot_before_any_request(make):
@@ -340,12 +339,10 @@ async def test_submit_reports_a_full_queue():
 
 
 async def test_stop_cancels_workers_and_pending_retries():
-    h = Harness(sender=FakeSender(NotifyError("http_503", retryable=True)))
-
     async def never_wake(seconds):
         await asyncio.Event().wait()
 
-    h.pipeline._sleep = never_wake
+    h = Harness(sender=FakeSender(NotifyError("http_503", retryable=True)), sleep=never_wake)
     await h.pipeline.start()
     request_id = h.submit()
     while h.store.get(request_id).notify_attempts == 0:

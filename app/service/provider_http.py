@@ -1,8 +1,11 @@
-"""Shared HTTP client for the provider (AI engine and notification service)."""
+"""Shared HTTP client and conventions for the provider (AI engine and notification service)."""
 
 import httpx
 
 from service.config import Settings
+
+# Statuses worth retrying: the request may succeed later without any change on our side.
+RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
 
 
 def create_provider_client(settings: Settings) -> httpx.AsyncClient:

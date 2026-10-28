@@ -65,5 +65,5 @@ def test_public_dict_masks_the_api_key():
 
 
 def test_bool_parsing_rejects_unknown_values():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="expected one of"):
         _parse("maybe", bool)

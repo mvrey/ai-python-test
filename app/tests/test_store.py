@@ -83,7 +83,7 @@ def test_failure_records_the_reason(store):
 
 @pytest.mark.parametrize(
     "path_to_terminal",
-    [TO_NOTIFYING + [Stage.SENT], [Stage.FAILED]],
+    [[*TO_NOTIFYING, Stage.SENT], [Stage.FAILED]],
     ids=["sent", "failed"],
 )
 def test_terminal_requests_cannot_move(store, path_to_terminal):
@@ -106,7 +106,7 @@ def test_rejected_transition_leaves_record_untouched(store):
     assert (unchanged.stage, unchanged.provider_id) == (Stage.CREATED, None)
 
 
-def test_attempt_counters_increment_and_touch_timestamp(store):
+def test_attempt_counters_increment(store):
     record = store.create("hola")
 
     store.record_ai_attempt(record.id)
@@ -114,8 +114,8 @@ def test_attempt_counters_increment_and_touch_timestamp(store):
     updated = store.record_notify_attempt(record.id)
 
     assert (updated.ai_attempts, updated.notify_attempts) == (2, 1)
-    assert updated.updated_at >= record.updated_at
     assert updated.stage is Stage.CREATED
+    assert updated.created_at == record.created_at
 
 
 def test_count_by_stage(store):

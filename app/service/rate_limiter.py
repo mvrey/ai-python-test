@@ -55,7 +55,7 @@ class TokenBucket:
                 await self._sleep(send_at - now)
                 if self._tat == schedule:  # no cooldown while we slept: the slot is ours
                     break
-            self._tat = max(self._tat, max(self._clock(), send_at)) + self._interval
+            self._tat = max(self._tat, self._clock(), send_at) + self._interval
 
     def cooldown(self, seconds: float) -> None:
         """Pause all sends for ``seconds``; afterwards resume at the normal rate, without a burst."""

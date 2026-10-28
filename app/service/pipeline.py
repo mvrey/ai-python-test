@@ -21,12 +21,13 @@ import asyncio
 import logging
 import random
 from collections import Counter
+from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 from service.ai_client import AIRequestError
 from service.config import Settings
 from service.guardrails import Accepted, FailureReason, extract_payload, precheck
-from service.models import NotificationPayload, Stage
+from service.models import NotificationPayload, RequestRecord, Stage, utcnow
 from service.notifier import NotifyError
 from service.prompts import ChatMessage, build_messages
 from service.store import InvalidTransitionError, RequestNotFoundError, RequestStore
@@ -48,6 +49,10 @@ class RateLimiter(Protocol):
     def cooldown(self, seconds: float) -> None: ...
 
 
+Sleep = Callable[[float], Awaitable[None]]
+Handler = Callable[[str], Awaitable[None]]
+
+
 class Pipeline:
     def __init__(
         self,
@@ -57,7 +62,7 @@ class Pipeline:
         sender: NotificationSender,
         limiter: RateLimiter,
         *,
-        sleep=asyncio.sleep,
+        sleep: Sleep = asyncio.sleep,
         rng: random.Random | None = None,
     ) -> None:
         self._settings = settings
@@ -111,17 +116,24 @@ class Pipeline:
         self._notify_workers.clear()
         self._delayed.clear()
 
+    @property
+    def healthy(self) -> bool:
+        """True while every worker is running."""
+        return (
+            self._alive(self._extraction_workers) == self._settings.extraction_workers
+            and self._alive(self._notify_workers) == self._settings.notify_workers
+        )
+
     def snapshot(self) -> dict:
         """Operational state for /health: worker liveness, backlog, and counters."""
-        extraction_alive = sum(not task.done() for task in self._extraction_workers)
-        notify_alive = sum(not task.done() for task in self._notify_workers)
         submitted = self.stats["submitted"]
         return {
-            "healthy": extraction_alive == self._settings.extraction_workers
-            and notify_alive == self._settings.notify_workers,
             "workers": {
-                "extraction": {"alive": extraction_alive, "expected": self._settings.extraction_workers},
-                "notify": {"alive": notify_alive, "expected": self._settings.notify_workers},
+                "extraction": {
+                    "alive": self._alive(self._extraction_workers),
+                    "expected": self._settings.extraction_workers,
+                },
+                "notify": {"alive": self._alive(self._notify_workers), "expected": self._settings.notify_workers},
             },
             "queues": {
                 "extraction": self._extraction_queue.qsize(),
@@ -133,7 +145,11 @@ class Pipeline:
             "counters": dict(sorted(self.stats.items())),
         }
 
-    async def _run(self, queue: asyncio.Queue[str], handle) -> None:
+    @staticmethod
+    def _alive(workers: list[asyncio.Task]) -> int:
+        return sum(not task.done() for task in workers)
+
+    async def _run(self, queue: asyncio.Queue[str], handle: Handler) -> None:
         while True:
             request_id = await queue.get()
             try:
@@ -219,12 +235,15 @@ class Pipeline:
             return
 
         self.stats["sent"] += 1
-        self._store.transition(request_id, Stage.SENT, provider_id=provider_id)
-        logger.info("sent id=%s attempt=%d provider_id=%s", request_id, attempt, provider_id)
+        record = self._store.transition(request_id, Stage.SENT, provider_id=provider_id)
+        logger.info(
+            "sent id=%s attempt=%d provider_id=%s elapsed=%.1fs",
+            request_id, attempt, provider_id, _elapsed(record),
+        )
 
     def _handle_notify_error(self, request_id: str, attempt: int, exc: NotifyError) -> None:
         self.stats[f"notify_error:{exc.reason}"] += 1
-        if exc.reason == "http_429":
+        if exc.rate_limited:
             self._limiter.cooldown(exc.retry_after or self._settings.notify_cooldown_sec)
 
         if not exc.retryable or attempt >= self._settings.max_notify_attempts:
@@ -261,9 +280,14 @@ class Pipeline:
 
     def _fail(self, request_id: str, reason: str) -> None:
         try:
-            self._store.transition(request_id, Stage.FAILED, error=reason)
+            record = self._store.transition(request_id, Stage.FAILED, error=reason)
         except (InvalidTransitionError, RequestNotFoundError):
             logger.warning("could not mark id=%s as failed (reason=%s)", request_id, reason)
             return
         self.stats[f"failed:{reason}"] += 1
-        logger.info("failed id=%s reason=%s", request_id, reason)
+        logger.info("failed id=%s reason=%s elapsed=%.1fs", request_id, reason, _elapsed(record))
+
+
+def _elapsed(record: RequestRecord) -> float:
+    """Seconds since the request was created: the end-to-end time including queueing."""
+    return (utcnow() - record.created_at).total_seconds()

@@ -146,7 +146,7 @@ class FakeMonitor:
         self.healthy = healthy
 
     def snapshot(self):
-        return {"healthy": self.healthy, "queues": {"extraction": 0, "notify": 3}, "ai_calls_per_request": 1.1}
+        return {"queues": {"extraction": 0, "notify": 3}, "ai_calls_per_request": 1.1}
 
 
 def health(client, monitor):
@@ -155,7 +155,8 @@ def health(client, monitor):
 
 
 def test_health_reports_request_counts_and_pipeline_state(client, store):
-    first, second = create(client), create(client)
+    create(client)
+    second = create(client)
     store.transition(second, Stage.EXTRACTION_PENDING)
     store.transition(second, Stage.EXTRACTING)
 
@@ -185,9 +186,9 @@ def test_health_with_the_real_pipeline():
     assert body["workers"]["extraction"]["alive"] == body["workers"]["extraction"]["expected"]
 
 
-def test_unexpected_errors_return_json_500(store, submitter):
+def test_unexpected_errors_return_json_500():
     class BrokenStore(InMemoryRequestStore):
-        def get(self, request_id):
+        def get(self, _request_id):
             raise RuntimeError("boom")
 
     app.dependency_overrides[get_store] = lambda: BrokenStore()

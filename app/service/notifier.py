@@ -18,11 +18,12 @@ import time
 import httpx
 
 from service.models import NotificationPayload
+from service.provider_http import RETRYABLE_STATUS
 
 logger = logging.getLogger(__name__)
 
 NOTIFY_PATH = "/v1/notify"
-_RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
+PRIORITY = "normal"
 _NOT_SENT_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 
 
@@ -32,14 +33,20 @@ class NotifyError(Exception):
         reason: str,
         *,
         retryable: bool,
+        status_code: int | None = None,
         maybe_delivered: bool = False,
         retry_after: float | None = None,
     ) -> None:
         super().__init__(reason)
-        self.reason = reason
+        self.reason = reason  # diagnostic label for logs and metrics; don't branch on it
         self.retryable = retryable
+        self.status_code = status_code  # None when no HTTP response was received
         self.maybe_delivered = maybe_delivered
         self.retry_after = retry_after
+
+    @property
+    def rate_limited(self) -> bool:
+        return self.status_code == 429
 
 
 class Notifier:
@@ -47,13 +54,13 @@ class Notifier:
         self._http = http
         self._timeout = timeout_sec
 
-    async def send(self, payload: NotificationPayload, trace_id: str, priority: str = "normal") -> str | None:
+    async def send(self, payload: NotificationPayload, trace_id: str) -> str | None:
         """Send one notification. Returns the provider id (None if the 200 body lacked one)."""
         try:
             response = await self._http.post(
                 NOTIFY_PATH,
                 json=payload.model_dump(),
-                params={"priority": priority, "trace_id": trace_id},
+                params={"priority": PRIORITY, "trace_id": trace_id},
                 timeout=self._timeout,
             )
         except _NOT_SENT_ERRORS as exc:
@@ -68,7 +75,8 @@ class Notifier:
             return _provider_id(response)
         raise NotifyError(
             f"http_{status}",
-            retryable=status in _RETRYABLE_STATUS,
+            retryable=status in RETRYABLE_STATUS,
+            status_code=status,
             retry_after=_retry_after(response) if status == 429 else None,
         )
 

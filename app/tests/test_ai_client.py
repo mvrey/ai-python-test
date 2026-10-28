@@ -2,13 +2,10 @@ import json
 
 import httpx
 import pytest
-import respx
+from conftest import API_KEY
 
 from service.ai_client import EXTRACT_PATH, AIClient, AIRequestError
-from service.config import Settings
-from service.provider_http import create_provider_client
 
-BASE_URL = "http://provider.test"
 MESSAGES = [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}]
 
 
@@ -17,21 +14,8 @@ def completion(content) -> dict:
 
 
 @pytest.fixture
-async def http():
-    client = create_provider_client(Settings(provider_base_url=BASE_URL, provider_api_key="secret"))
-    yield client
-    await client.aclose()
-
-
-@pytest.fixture
-def ai(http):
-    return AIClient(http, timeout_sec=1.0)
-
-
-@pytest.fixture
-def provider():
-    with respx.mock(base_url=BASE_URL, assert_all_called=False) as mock:
-        yield mock
+def ai(provider_http):
+    return AIClient(provider_http, timeout_sec=1.0)
 
 
 async def test_returns_assistant_content_and_sends_contract(ai, provider):
@@ -41,14 +25,13 @@ async def test_returns_assistant_content_and_sends_contract(ai, provider):
 
     assert route.call_count == 1
     request = route.calls.last.request
-    assert request.headers["X-API-Key"] == "secret"
+    assert request.headers["X-API-Key"] == API_KEY
     assert json.loads(request.content) == {"messages": MESSAGES}
 
 
-@pytest.mark.parametrize("content, expected", [(None, ""), ([{"type": "text", "text": "a"}, {"text": "b"}], "ab")])
-async def test_tolerates_null_and_multipart_content(ai, provider, content, expected):
-    provider.post(EXTRACT_PATH).respond(200, json=completion(content))
-    assert await ai.extract(MESSAGES) == expected
+async def test_null_content_is_an_empty_answer(ai, provider):
+    provider.post(EXTRACT_PATH).respond(200, json=completion(None))
+    assert await ai.extract(MESSAGES) == ""
 
 
 @pytest.mark.parametrize("status", [408, 429, 500, 502, 503, 504])
@@ -88,9 +71,11 @@ async def test_network_errors_are_retryable(ai, provider, error, reason):
         httpx.Response(200, json={"choices": []}),
         httpx.Response(200, json={"choices": [{"message": "text"}]}),
         httpx.Response(200, json=completion(42)),
+        httpx.Response(200, json=completion([{"type": "text", "text": "a"}])),
         httpx.Response(200, json=[1, 2]),
     ],
-    ids=["not-json", "no-choices", "empty-choices", "message-not-object", "content-not-text", "body-not-object"],
+    ids=["not-json", "no-choices", "empty-choices", "message-not-object", "content-number", "content-list",
+         "body-not-object"],
 )
 async def test_malformed_envelopes_are_retryable(ai, provider, response):
     provider.post(EXTRACT_PATH).mock(return_value=response)

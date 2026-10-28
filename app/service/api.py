@@ -7,7 +7,7 @@ pipeline workers, which is what makes the store's check-then-act sequences atomi
 
 import logging
 from collections import Counter
-from typing import Protocol
+from typing import Annotated, Protocol
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
@@ -24,6 +24,9 @@ class JobSubmitter(Protocol):
 
 
 class PipelineMonitor(Protocol):
+    @property
+    def healthy(self) -> bool: ...
+
     def snapshot(self) -> dict: ...
 
 
@@ -39,6 +42,11 @@ def get_monitor(request: Request) -> PipelineMonitor:
     return request.app.state.pipeline
 
 
+StoreDep = Annotated[RequestStore, Depends(get_store)]
+SubmitterDep = Annotated[JobSubmitter, Depends(get_submitter)]
+MonitorDep = Annotated[PipelineMonitor, Depends(get_monitor)]
+
+
 def _require(store: RequestStore, request_id: str) -> RequestRecord:
     record = store.get(request_id)
     if record is None:
@@ -51,7 +59,7 @@ def _status_response(record: RequestRecord) -> StatusResponse:
 
 
 @router.post("/v1/requests", status_code=status.HTTP_201_CREATED, response_model=CreateResponse)
-async def create_request(body: CreateRequest, store: RequestStore = Depends(get_store)) -> CreateResponse:
+async def create_request(body: CreateRequest, store: StoreDep) -> CreateResponse:
     record = store.create(body.user_input)
     logger.debug("request created id=%s", record.id)
     return CreateResponse(id=record.id)
@@ -62,11 +70,7 @@ async def create_request(body: CreateRequest, store: RequestStore = Depends(get_
     status_code=status.HTTP_202_ACCEPTED,
     response_model=StatusResponse,
 )
-async def process_request(
-    request_id: str,
-    store: RequestStore = Depends(get_store),
-    submitter: JobSubmitter = Depends(get_submitter),
-) -> StatusResponse:
+async def process_request(request_id: str, store: StoreDep, submitter: SubmitterDep) -> StatusResponse:
     """Accept the request for asynchronous processing and return immediately.
 
     Idempotent: only a freshly created request is enqueued; any later call reports the
@@ -85,19 +89,14 @@ async def process_request(
 
 
 @router.get("/v1/requests/{request_id}", response_model=StatusResponse)
-async def get_request_status(request_id: str, store: RequestStore = Depends(get_store)) -> StatusResponse:
+async def get_request_status(request_id: str, store: StoreDep) -> StatusResponse:
     return _status_response(_require(store, request_id))
 
 
 @router.get("/health")
-async def health(
-    response: Response,
-    store: RequestStore = Depends(get_store),
-    monitor: PipelineMonitor = Depends(get_monitor),
-) -> dict:
+async def health(response: Response, store: StoreDep, monitor: MonitorDep) -> dict:
     """Liveness plus operational state. 503 if any pipeline worker has died."""
-    snapshot = monitor.snapshot()
-    healthy = snapshot.pop("healthy")
+    healthy = monitor.healthy
     if not healthy:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
@@ -112,5 +111,5 @@ async def health(
             "by_status": dict(by_status),
             "by_stage": {stage.value: count for stage, count in by_stage.items()},
         },
-        **snapshot,
+        **monitor.snapshot(),
     }

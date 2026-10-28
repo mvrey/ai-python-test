@@ -4,33 +4,17 @@ import time
 
 import httpx
 import pytest
-import respx
+from conftest import API_KEY
 
-from service.config import Settings
 from service.models import NotificationPayload
 from service.notifier import NOTIFY_PATH, Notifier, NotifyError
-from service.provider_http import create_provider_client
 
-BASE_URL = "http://provider.test"
 PAYLOAD = NotificationPayload(to="699888777", message="cita", type="sms")
 
 
 @pytest.fixture
-async def http():
-    client = create_provider_client(Settings(provider_base_url=BASE_URL, provider_api_key="secret"))
-    yield client
-    await client.aclose()
-
-
-@pytest.fixture
-def notifier(http):
-    return Notifier(http, timeout_sec=1.0)
-
-
-@pytest.fixture
-def provider():
-    with respx.mock(base_url=BASE_URL, assert_all_called=False) as mock:
-        yield mock
+def notifier(provider_http):
+    return Notifier(provider_http, timeout_sec=1.0)
 
 
 async def send_expecting_error(notifier) -> NotifyError:
@@ -46,7 +30,7 @@ async def test_success_returns_provider_id_and_sends_contract(notifier, provider
 
     assert route.call_count == 1
     request = route.calls.last.request
-    assert request.headers["X-API-Key"] == "secret"
+    assert request.headers["X-API-Key"] == API_KEY
     assert json.loads(request.content) == {"to": "699888777", "message": "cita", "type": "sms"}
     assert dict(request.url.params) == {"priority": "normal", "trace_id": "req-1"}
 
@@ -66,7 +50,22 @@ async def test_429_is_retryable_and_reports_retry_after(notifier, provider):
 
     error = await send_expecting_error(notifier)
 
-    assert (error.reason, error.retryable, error.retry_after, error.maybe_delivered) == ("http_429", True, 3.0, False)
+    assert (error.status_code, error.rate_limited, error.retryable, error.retry_after, error.maybe_delivered) == (
+        429, True, True, 3.0, False,
+    )
+
+
+@pytest.mark.parametrize("status", [500, 401])
+async def test_only_429_is_rate_limited(notifier, provider, status):
+    provider.post(NOTIFY_PATH).respond(status)
+    error = await send_expecting_error(notifier)
+    assert error.status_code == status and not error.rate_limited
+
+
+async def test_errors_without_a_response_have_no_status(notifier, provider):
+    provider.post(NOTIFY_PATH).mock(side_effect=httpx.ConnectError("refused"))
+    error = await send_expecting_error(notifier)
+    assert error.status_code is None and not error.rate_limited
 
 
 async def test_429_without_retry_after(notifier, provider):

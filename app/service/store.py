@@ -15,7 +15,7 @@ import uuid
 from dataclasses import replace
 from typing import Protocol
 
-from service.models import NotificationPayload, RequestRecord, Stage, utcnow
+from service.models import NotificationPayload, RequestRecord, Stage
 
 
 class RequestNotFoundError(KeyError):
@@ -91,17 +91,17 @@ class InMemoryRequestStore:
             record.provider_id = provider_id
         if error is not None:
             record.error = error
-        return self._touch(record)
+        return replace(record)
 
     def record_ai_attempt(self, request_id: str) -> RequestRecord:
         record = self._require(request_id)
         record.ai_attempts += 1
-        return self._touch(record)
+        return replace(record)
 
     def record_notify_attempt(self, request_id: str) -> RequestRecord:
         record = self._require(request_id)
         record.notify_attempts += 1
-        return self._touch(record)
+        return replace(record)
 
     def count_by_stage(self) -> dict[Stage, int]:
         counts = dict.fromkeys(Stage, 0)
@@ -114,8 +114,3 @@ class InMemoryRequestStore:
             return self._records[request_id]
         except KeyError:
             raise RequestNotFoundError(request_id) from None
-
-    @staticmethod
-    def _touch(record: RequestRecord) -> RequestRecord:
-        record.updated_at = utcnow()
-        return replace(record)

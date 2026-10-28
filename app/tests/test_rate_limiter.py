@@ -1,4 +1,5 @@
 import asyncio
+from itertools import pairwise
 
 import pytest
 
@@ -51,7 +52,7 @@ async def test_first_request_is_immediate(clock):
 
 async def test_steady_rate(clock):
     times = await acquire_times(bucket(clock, rate=4.5), clock, 10)
-    gaps = [b - a for a, b in zip(times, times[1:])]
+    gaps = [b - a for a, b in pairwise(times)]
     assert all(gap == pytest.approx(1 / 4.5) for gap in gaps)
 
 
@@ -117,7 +118,7 @@ async def test_cooldown_during_a_wait_extends_it(clock):
 
 @pytest.mark.parametrize("rate, capacity", [(0, 1), (-1, 1), (1, 0)])
 def test_invalid_configuration(rate, capacity):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="rate_per_sec"):
         TokenBucket(rate, capacity)
 
 

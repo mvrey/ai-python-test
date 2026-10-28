@@ -46,7 +46,7 @@ app.include_router(router)
 
 
 @app.exception_handler(Exception)
-async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+async def unhandled_exception_handler(request: Request, _exc: Exception) -> JSONResponse:
     """Last line of defence: log the traceback and keep the response JSON."""
     logger.exception("unhandled error on %s %s", request.method, request.url.path)
     return JSONResponse(

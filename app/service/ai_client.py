@@ -10,11 +10,11 @@ import logging
 import httpx
 
 from service.prompts import ChatMessage
+from service.provider_http import RETRYABLE_STATUS
 
 logger = logging.getLogger(__name__)
 
 EXTRACT_PATH = "/v1/ai/extract"
-_RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
 
 
 class AIRequestError(Exception):
@@ -40,7 +40,7 @@ class AIClient:
 
         if response.status_code != 200:
             status = response.status_code
-            raise AIRequestError(f"http_{status}", retryable=status in _RETRYABLE_STATUS)
+            raise AIRequestError(f"http_{status}", retryable=status in RETRYABLE_STATUS)
 
         try:
             content = _content_of(response.json())
@@ -51,12 +51,10 @@ class AIClient:
 
 
 def _content_of(body: dict) -> str:
-    """``choices[0].message.content``, tolerating null and multi-part (list) content."""
+    """``choices[0].message.content``; a null content is an empty answer."""
     content = body["choices"][0]["message"].get("content")
     if content is None:
         return ""
-    if isinstance(content, list):  # [{"type": "text", "text": "..."}, ...]
-        return "".join(part.get("text", "") for part in content if isinstance(part, dict))
     if not isinstance(content, str):
         raise TypeError("content is not text")
     return content
